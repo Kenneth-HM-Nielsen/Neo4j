@@ -5,8 +5,45 @@ ORDER BY sum_exp DESC
 # For a specific full democracy, find which authoritarian regimes it exports to and return results ordered by biggest export values
 MATCH (c:Country {name: 'Denmark'})-[e:exports_to]->(cc:Country {regime_type: 'Authoritarian'}) RETURN c, e.export_value_pct, cc ORDER BY e.export_value_pct DESC
 
-# Calculate second order democracy score:
+# Calculate second order export democracy score:
 MATCH (c:Country )-[e:exports_to]->(cc:Country) 
 WHERE toFloat(c.democracy_score)<>c.democracy_score
 AND toFloat(cc.democracy_score)<>cc.democracy_score
-RETURN c.name, c.democracy_score as DEMO_SCORE, sum(e.export_value_pct*toFloat(cc.democracy_score))/sum(e.export_value_pct) as SECOND_ORDER_DEMO_SCORE ORDER BY SECOND_ORDER_DEMO_SCORE DESC
+RETURN c.name, c.democracy_score as DEMO_SCORE, sum(e.export_value*toFloat(cc.democracy_score))/sum(e.export_value) as EXP_SECOND_ORDER_DSCORE, sum(e.import_value*toFloat(cc.democracy_score))/sum(e.import_value) as IMP_SECOND_ORDER_DSCORE
+
+# Calculate second order export and import democracy score:
+MATCH (c:Country)-[e:exports_to]->(cc:Country), 
+(c:Country)<-[i:imports_from]-(cc:Country)
+RETURN c.name, c.democracy_score as DEMO_SCORE, 
+sum(e.export_value*cc.democracy_score)/sum(e.export_value) as EXP_SECOND_ORDER_DSCORE, 
+sum(i.import_value*cc.democracy_score)/sum(i.import_value) as IMP_SECOND_ORDER_DSCORE
+
+# Louvain algo: 
+CALL algo.louvain.stream('Country', 'exports_to', {
+ graph: 'huge',
+ includeIntermediateCommunities: TRUE,
+ direction: 'outgoing',
+ weightProperty: 'export_value',
+ writeProperty: 'community'
+}) YIELD nodeId, community, communities
+RETURN algo.asNode(nodeId).name as name, community, communities
+ORDER BY name ASC
+
+# Degree centrality
+CALL algo.degree.stream(
+'MATCH (n:Country) RETURN id(n) AS id',
+ "MATCH (n)-[r:exports_to]->(m:Country) RETURN id(n) AS source, n.name as NAME, id(m) AS target, r.export_value AS weight",
+{graph: 'cypher', write: false, writeProperty:'eigenvector', concurrency:4, normalization:'max'})
+YIELD nodeId,  score
+WHERE score>0
+RETURN algo.asNode(nodeId).name as name, score
+ORDER BY score DESC
+# eigenvector centrality with cypher specified graph
+CALL algo.eigenvector.stream(
+'MATCH (n:Country) WHERE n.regime_type="Full democracy" RETURN id(n) AS id',
+ "MATCH (n)-[r:exports_to]->(m:Country) RETURN id(n) AS source, n.name as NAME, id(m) AS target, r.export_value AS weight",
+{graph: 'cypher', write: false, writeProperty:'eigenvector', concurrency:4, normalization:'max'})
+YIELD nodeId,  score
+WHERE score>0
+RETURN algo.asNode(nodeId).name as name, score
+ORDER BY name
