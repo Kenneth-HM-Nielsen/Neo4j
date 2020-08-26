@@ -7,16 +7,15 @@ MATCH (c:Country {name: 'Denmark'})-[e:exports_to]->(cc:Country {regime_type: 'A
 
 # Calculate second order export democracy score:
 MATCH (c:Country )-[e:exports_to]->(cc:Country) 
-WHERE toFloat(c.democracy_score)<>c.democracy_score
-AND toFloat(cc.democracy_score)<>cc.democracy_score
-RETURN c.name, c.democracy_score as DEMO_SCORE, sum(e.export_value*toFloat(cc.democracy_score))/sum(e.export_value) as EXP_SECOND_ORDER_DSCORE, sum(e.import_value*toFloat(cc.democracy_score))/sum(e.import_value) as IMP_SECOND_ORDER_DSCORE
+RETURN c.name, c.democracy_score as DEMO_SCORE, 
+sum(e.export_value*cc.democracy_score)/sum(e.export_value) as EXP_SECOND_ORDER_DSCORE
 
 # Calculate second order export and import democracy score:
 MATCH (c:Country)-[e:exports_to]->(cc:Country), 
-(c:Country)<-[i:imports_from]-(cc:Country)
+(c)<-[i:exports_to]-(cc)
 RETURN c.name, c.democracy_score as DEMO_SCORE, 
 sum(e.export_value*cc.democracy_score)/sum(e.export_value) as EXP_SECOND_ORDER_DSCORE, 
-sum(i.import_value*cc.democracy_score)/sum(i.import_value) as IMP_SECOND_ORDER_DSCORE
+sum(i.export_value*cc.democracy_score)/sum(i.export_value) as IMP_SECOND_ORDER_DSCORE
 
 # Louvain algo: 
 CALL algo.louvain.stream('Country', 'exports_to', {
@@ -29,6 +28,25 @@ CALL algo.louvain.stream('Country', 'exports_to', {
 RETURN algo.asNode(nodeId).name as name, community, communities
 ORDER BY name ASC
 
+# Louvain with Cypher query
+CALL algo.louvain.stream('MATCH (n:Country) RETURN id(n) AS id',
+ "MATCH (n)-[r:exports_to]->(m:Country) RETURN id(n) AS source, n.name as NAME, id(m) AS target, r.export_value AS weight",{
+ graph: 'cypher',
+ includeIntermediateCommunities: TRUE,
+ //direction: 'outgoing',
+ //weightProperty: 'export_value',
+ writeProperty: 'community',
+ levels: 4
+}) YIELD nodeId, community, communities
+RETURN algo.asNode(nodeId).name as name, community, communities
+ORDER BY name ASC
+
+
+# Count number of out/in going connections
+MATCH (c:Country)
+WHERE c.democracy_score>0
+RETURN c.name, c.democracy_score, size((c)-->(:Country)) as out, size((c)<--(:Country)) as in ORDER BY out ASC
+
 # Degree centrality
 CALL algo.degree.stream(
 'MATCH (n:Country) RETURN id(n) AS id',
@@ -38,6 +56,7 @@ YIELD nodeId,  score
 WHERE score>0
 RETURN algo.asNode(nodeId).name as name, score
 ORDER BY score DESC
+
 # eigenvector centrality with cypher specified graph
 CALL algo.eigenvector.stream(
 'MATCH (n:Country) WHERE n.regime_type="Full democracy" RETURN id(n) AS id',
